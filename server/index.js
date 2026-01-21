@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const supabase = require('./db');
 
 const app = express();
 app.use(cors());
@@ -12,85 +13,159 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGIN || "*", // Allow specific origin in production
+    origin: process.env.CORS_ORIGIN || "*",
     methods: ["GET", "POST"]
   }
 });
 
-// In-memory data store for POC
-// Structure: { establishmentId: [ { id, name, phone, joinedAt, status } ] }
-const queues = {};
-
 io.on('connection', (socket) => {
-  console.log(`User connected: ${socket.id}`);
+  console.log('User connected:', socket.id);
 
-  // Join an establishment room (Admin or Customer)
-  socket.on('join_room', (establishmentId) => {
+  socket.on('join_room', async (establishmentId) => {
     socket.join(establishmentId);
-    console.log(`User ${socket.id} joined room ${establishmentId}`);
-    // Send current queue state locally
-    socket.emit('queue_update', queues[establishmentId] || []);
+
+    // Fetch and send current queue
+    const { data: queue, error } = await supabase
+      .from('queue')
+      .select(`*, customers (name, phone)`)
+      .eq('establishment_id', establishmentId)
+      .in('status', ['waiting', 'called'])
+      .order('created_at', { ascending: true });
+
+    if (!error && queue) {
+      const formattedQueue = queue.map(entry => ({
+        id: entry.customer_id,
+        name: entry.customers?.name,
+        phone: entry.customers?.phone,
+        status: entry.status,
+        entry_id: entry.id
+      }));
+      socket.emit('queue_update', formattedQueue);
+    }
   });
 
-  // Add a customer to the queue
-  socket.on('add_customer', ({ establishmentId, name, phone }) => {
-    if (!queues[establishmentId]) queues[establishmentId] = [];
+  socket.on('add_customer', async ({ establishmentId, name, phone }) => {
+    try {
+      // Find or Create Customer
+      let customerId;
+      const { data: existingCustomer } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('phone', phone)
+        .single();
 
-    const newCustomer = {
-      id: uuidv4(),
-      socketId: socket.id, // Track socket ID to notify specific user if needed
-      name,
-      phone,
-      joinedAt: new Date().toISOString(),
-      status: 'waiting' // waiting, called, served
-    };
-
-    queues[establishmentId].push(newCustomer);
-
-    // Boardcase update to everyone in the establishment room (Admins & Customers)
-    io.to(establishmentId).emit('queue_update', queues[establishmentId]);
-
-    // Confirm addition to the sender
-    socket.emit('join_success', newCustomer);
-  });
-
-  // Call a customer
-  socket.on('call_customer', ({ establishmentId, customerId }) => {
-    const queue = queues[establishmentId];
-    if (queue) {
-      const customer = queue.find(c => c.id === customerId);
-      if (customer) {
-        customer.status = 'called';
-        // Notify everyone (updates lists)
-        io.to(establishmentId).emit('queue_update', queue);
-        // Specific event for the customer to trigger vibration/alert
-        // We can broadcast this to the room, the client will check if it matches their ID
-        io.to(establishmentId).emit('customer_called', customerId);
+      if (existingCustomer) {
+        customerId = existingCustomer.id;
+      } else {
+        const { data: newCustomer, error } = await supabase
+          .from('customers')
+          .insert([{ name, phone }])
+          .select()
+          .single();
+        if (error) {
+          console.error("Error creating customer", error);
+          return;
+        }
+        customerId = newCustomer.id;
       }
-    }
-  });
 
-  // Remove/Complete a customer
-  socket.on('remove_customer', ({ establishmentId, customerId }) => {
-    if (queues[establishmentId]) {
-      queues[establishmentId] = queues[establishmentId].filter(c => c.id !== customerId);
-      io.to(establishmentId).emit('queue_update', queues[establishmentId]);
-    }
-  });
+      // Add to Queue if not exists
+      const { data: activeEntry } = await supabase
+        .from('queue')
+        .select('id')
+        .eq('establishment_id', establishmentId)
+        .eq('customer_id', customerId)
+        .in('status', ['waiting', 'called'])
+        .single();
 
-  // Status check (for client polling/reconnection)
-  socket.on('get_status', ({ establishmentId, customerId }) => {
-    const queue = queues[establishmentId];
-    if (queue) {
-      const customer = queue.find(c => c.id === customerId);
-      if (customer) {
-        socket.emit('status_update', customer);
+      if (!activeEntry) {
+        await supabase.from('queue').insert([{
+          establishment_id: establishmentId,
+          customer_id: customerId,
+          status: 'waiting'
+        }]);
       }
+
+      // Broadcast Update
+      const { data: updatedQueue } = await supabase
+        .from('queue')
+        .select('*, customers(name, phone)')
+        .eq('establishment_id', establishmentId)
+        .in('status', ['waiting', 'called'])
+        .order('created_at', { ascending: true });
+
+      const formattedQueue = updatedQueue.map(entry => ({
+        id: entry.customer_id,
+        name: entry.customers?.name,
+        phone: entry.customers?.phone,
+        status: entry.status,
+        entry_id: entry.id
+      }));
+
+      io.to(establishmentId).emit('queue_update', formattedQueue);
+      socket.emit('join_success', { id: customerId, name, phone });
+
+    } catch (e) {
+      console.error("Error in add_customer", e);
     }
+  });
+
+  socket.on('call_customer', async ({ establishmentId, customerId }) => {
+    await supabase
+      .from('queue')
+      .update({ status: 'called' })
+      .eq('establishment_id', establishmentId)
+      .eq('customer_id', customerId)
+      .eq('status', 'waiting');
+
+    // Broadcast
+    const { data: updatedQueue } = await supabase
+      .from('queue')
+      .select('*, customers(name, phone)')
+      .eq('establishment_id', establishmentId)
+      .in('status', ['waiting', 'called'])
+      .order('created_at', { ascending: true });
+
+    const formattedQueue = updatedQueue.map(entry => ({
+      id: entry.customer_id,
+      name: entry.customers?.name,
+      phone: entry.customers?.phone,
+      status: entry.status,
+      entry_id: entry.id
+    }));
+
+    io.to(establishmentId).emit('queue_update', formattedQueue);
+    io.to(establishmentId).emit('customer_called', customerId);
+  });
+
+  socket.on('remove_customer', async ({ establishmentId, customerId }) => {
+    await supabase
+      .from('queue')
+      .update({ status: 'completed' })
+      .eq('establishment_id', establishmentId)
+      .eq('customer_id', customerId);
+
+    // Broadcast
+    const { data: updatedQueue } = await supabase
+      .from('queue')
+      .select('*, customers(name, phone)')
+      .eq('establishment_id', establishmentId)
+      .in('status', ['waiting', 'called'])
+      .order('created_at', { ascending: true });
+
+    const formattedQueue = updatedQueue ? updatedQueue.map(entry => ({
+      id: entry.customer_id,
+      name: entry.customers?.name,
+      phone: entry.customers?.phone,
+      status: entry.status,
+      entry_id: entry.id
+    })) : [];
+
+    io.to(establishmentId).emit('queue_update', formattedQueue);
   });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected', socket.id);
+    console.log('User disconnected:', socket.id);
   });
 });
 
