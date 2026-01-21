@@ -7,6 +7,7 @@ import QRCode from "react-qr-code";
 const AdminDashboard = () => {
     const { id: establishmentId } = useParams();
     const socket = useSocket();
+    const [queue, setQueue] = useState([]);
     const [showQr, setShowQr] = useState(false);
     const navigate = useNavigate();
 
