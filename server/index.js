@@ -12,7 +12,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*", // Allow all origins for POC
+    origin: process.env.CORS_ORIGIN || "*", // Allow specific origin in production
     methods: ["GET", "POST"]
   }
 });
@@ -35,7 +35,7 @@ io.on('connection', (socket) => {
   // Add a customer to the queue
   socket.on('add_customer', ({ establishmentId, name, phone }) => {
     if (!queues[establishmentId]) queues[establishmentId] = [];
-    
+
     const newCustomer = {
       id: uuidv4(),
       socketId: socket.id, // Track socket ID to notify specific user if needed
@@ -46,10 +46,10 @@ io.on('connection', (socket) => {
     };
 
     queues[establishmentId].push(newCustomer);
-    
+
     // Boardcase update to everyone in the establishment room (Admins & Customers)
     io.to(establishmentId).emit('queue_update', queues[establishmentId]);
-    
+
     // Confirm addition to the sender
     socket.emit('join_success', newCustomer);
   });
@@ -77,16 +77,16 @@ io.on('connection', (socket) => {
       io.to(establishmentId).emit('queue_update', queues[establishmentId]);
     }
   });
-  
+
   // Status check (for client polling/reconnection)
   socket.on('get_status', ({ establishmentId, customerId }) => {
-      const queue = queues[establishmentId];
-      if(queue) {
-          const customer = queue.find(c => c.id === customerId);
-          if(customer) {
-              socket.emit('status_update', customer);
-          }
+    const queue = queues[establishmentId];
+    if (queue) {
+      const customer = queue.find(c => c.id === customerId);
+      if (customer) {
+        socket.emit('status_update', customer);
       }
+    }
   });
 
   socket.on('disconnect', () => {

@@ -16,7 +16,8 @@ export const SocketProvider = ({ children }) => {
         // Note: If accessing from mobile on the same network, localhost won't work.
         // We might need to use the computer's IP address.
         // For now, we use localhost.
-        const newSocket = io('http://localhost:3001');
+        const socketUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+        const newSocket = io(socketUrl);
 
         setSocket(newSocket);
 
