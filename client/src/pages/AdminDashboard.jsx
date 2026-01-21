@@ -7,10 +7,18 @@ import QRCode from "react-qr-code";
 const AdminDashboard = () => {
     const { id: establishmentId } = useParams();
     const socket = useSocket();
-    const [queue, setQueue] = useState([]);
     const [showQr, setShowQr] = useState(false);
+    const navigate = useNavigate();
 
     useEffect(() => {
+        // Basic Auth Check
+        const token = localStorage.getItem('admin_token');
+        if (!token || token !== establishmentId) {
+            alert("Faça login para acessar este painel.");
+            navigate('/');
+            return;
+        }
+
         if (!socket) return;
 
         socket.emit('join_room', establishmentId);

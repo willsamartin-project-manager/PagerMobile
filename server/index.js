@@ -11,6 +11,58 @@ app.use(express.json());
 
 const server = http.createServer(app);
 
+// AUTH ENDPOINTS
+app.post('/api/register', async (req, res) => {
+  const { id, name, password } = req.body;
+  if (!id || !name || !password) return res.status(400).json({ error: 'Missing fields' });
+
+  // Sanitize ID
+  const slug = id.toLowerCase().replace(/\s+/g, '-');
+
+  try {
+    const { data, error } = await supabase
+      .from('establishments')
+      .insert([{ id: slug, name, password }]) // In real app, hash password!
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === '23505') return res.status(400).json({ error: 'ID already exists' });
+      throw error;
+    }
+
+    res.json({ success: true, establishment: data });
+  } catch (e) {
+    console.error("Register Error", e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  const { id, password } = req.body;
+  if (!id || !password) return res.status(400).json({ error: 'Missing fields' });
+
+  const slug = id.toLowerCase().replace(/\s+/g, '-');
+
+  try {
+    const { data, error } = await supabase
+      .from('establishments')
+      .select('*')
+      .eq('id', slug)
+      .eq('password', password) // In real app, compare hash!
+      .single();
+
+    if (error || !data) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    res.json({ success: true, establishment: data });
+  } catch (e) {
+    console.error("Login Error", e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 const io = new Server(server, {
   cors: {
     origin: process.env.CORS_ORIGIN || "*",
