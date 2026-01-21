@@ -30,6 +30,11 @@ const Landing = () => {
 
             // Success
             if (data.success) {
+                if (data.superAdmin) {
+                    localStorage.setItem('is_super_admin', 'true');
+                    navigate('/super-admin');
+                    return;
+                }
                 const estId = data.establishment.id;
                 // Save session (basic)
                 localStorage.setItem('admin_token', estId); // In real app, use JWT

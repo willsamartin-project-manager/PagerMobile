@@ -42,6 +42,11 @@ app.post('/api/login', async (req, res) => {
   const { id, password } = req.body;
   if (!id || !password) return res.status(400).json({ error: 'Missing fields' });
 
+  // SUPER ADMIN CHECK
+  if (id === 'admin' && password === 'KT6MQ-cwu3J7ZKD') {
+    return res.json({ success: true, superAdmin: true });
+  }
+
   const slug = id.toLowerCase().replace(/\s+/g, '-');
 
   try {
@@ -59,6 +64,23 @@ app.post('/api/login', async (req, res) => {
     res.json({ success: true, establishment: data });
   } catch (e) {
     console.error("Login Error", e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/establishments', async (req, res) => {
+  // In real app, verify admin token here
+  try {
+    const { data, error } = await supabase
+      .from('establishments')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (e) {
+    console.error("Fetch Establishments Error", e);
     res.status(500).json({ error: 'Server error' });
   }
 });
