@@ -58,12 +58,40 @@ const QueueStatus = () => {
         };
 
         const handleCalled = () => {
+            if (isCalled) return; // Already called
             setIsCalled(true);
-            // Haptic feedback
+
+            // Haptic feedback (Android / supported devices)
             if (navigator.vibrate) {
-                navigator.vibrate([500, 300, 500, 300, 500]); // Vibrate pattern
-                // Loop vibration? Browser might block continuous vibration without user interaction context repeatedly, 
-                // but we trigger it once strongly. 
+                try {
+                    navigator.vibrate([500, 300, 500, 300, 500]);
+                } catch (e) {
+                    console.error("Vibration failed", e);
+                }
+            }
+
+            // Audio Alert (iOS fallback/Desktop)
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (AudioContext) {
+                    const ctx = new AudioContext();
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(440, ctx.currentTime); // A4
+                    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.5); // Slide up
+
+                    gain.gain.setValueAtTime(0.5, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.5);
+                }
+            } catch (e) {
+                console.error("Audio play failed", e);
             }
         };
 
@@ -71,6 +99,7 @@ const QueueStatus = () => {
 
         // Also listen for specific call event just in case
         socket.on('customer_called', (calledId) => {
+            console.log("Event: customer_called", calledId, "My ID:", customer.id);
             if (calledId === customer.id) {
                 handleCalled();
             }
