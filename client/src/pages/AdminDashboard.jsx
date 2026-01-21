@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../context/SocketContext';
 import { Trash2, Bell, CheckCircle, QrCode } from 'lucide-react';
 import QRCode from "react-qr-code";
